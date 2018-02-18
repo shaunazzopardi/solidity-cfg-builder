@@ -24,7 +24,7 @@ Compilation: Run the following command in the src folder:
 ## License
 This project is licensed under the terms of the [Apache 2.0 license](LICENSE).
 
-## Overview
+## TODO
 1. Handle function modifiers
 2. Allow option to flatted CFGs with function calls
 
