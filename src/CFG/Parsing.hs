@@ -22,8 +22,13 @@ instance Parseable State where
     parser = do no <- nat
                 spaces *> char ':' <* spaces
  --               address <- manyTill alphaNum (string "#")
-                functionName <- manyTill alphaNum (char '(' <* spaces <* (char ')'))
-                return (FunctionCallState no (Identifier functionName))
+                functionName <- manyTill alphaNum (char '(' <* spaces)
+                (char ')')
+                return (FunctionCallState no (FunctionCall (Identifier functionName) Nothing))
+             <||> do no <- nat
+                     spaces *> char ':' <* spaces
+                     functionCall <- parser
+                     return (FunctionCallState no functionCall)
              <||> do string "throw"
                      return ThrowState
              <||> do string "return"
@@ -33,10 +38,26 @@ instance Parseable State where
     display ThrowState = "throw"
     display ReturnState = "return"
     display (BasicState l) = show l
-    display (FunctionCallState l (Identifier functionName)) = "\"" ++ (show l) ++ " : " ++  functionName ++ "()\"" 
-    display _ = "state"
+    display (FunctionCallState l functionCall) = "\"" ++ (show l) ++ " : " ++ display functionCall ++ "\"" 
+--    display _ = "state"
 --    display (ContractCallState l contractAddress (Identifier functionName)) = show l ++ " : " ++   contractAddress ++ "." ++ functionName ++ "()"
 --    display (ContractDelegateCallState l contractAddress (Identifier functionName)) = show l ++ " : " ++   contractAddress ++ "#" ++ functionName ++ "()"
+
+instance Parseable FunctionCall where
+    parser = do functionName <- manyTill alphaNum (char '(' <* spaces)
+                (char ')')
+                return (FunctionCall (Identifier functionName) Nothing)
+             <||> do functionName <- manyTill alphaNum (char '(' <* spaces)
+                     expressionList <- parser
+                     (char ')')
+                     return (FunctionCall (Identifier functionName) (Just (Right expressionList)))
+             <||> do functionName <- manyTill alphaNum (char '(' <* spaces)
+                     nameValueList <- parser
+                     (char ')')
+                     return (FunctionCall (Identifier functionName) (Just (Left nameValueList)))
+    display (FunctionCall functionName Nothing) = display functionName
+    display (FunctionCall functionName (Just (Left nameValueList))) = display functionName ++ "(" ++ (display nameValueList) ++ ")" 
+    display (FunctionCall functionName (Just (Right expressionList))) = display functionName ++ "(" ++ (display expressionList) ++ ")" 
 
 instance Parseable Label where
     parser = do char '*'
@@ -52,19 +73,19 @@ instance Parseable Label where
             <||> do string "uponEntry"
                     spaces
                     char '('
-                    functionName <- manyTill anyToken (char '(')
+                    functionCall <- parser
                     spaces
                     char ')'
                     spaces
-                    return (Entering (Identifier functionName))
+                    return (Entering functionCall)
             <||> do string "uponExit"
                     spaces
                     char '('
-                    functionName <- manyTill anyToken (char '(')
+                    functionCall <- parser
                     spaces
                     char ')'
                     spaces
-                    return (Exiting (Identifier functionName))
+                    return (Exiting functionCall)
             <||> do expression <- parser
                     spaces
                     string "=="
@@ -81,8 +102,8 @@ instance Parseable Label where
     display Any = "*"
     display (ReturnLabel expression) = "return " ++ (display expression) ++ ""
     display ReturnVoid = "return"
-    display (Entering (Identifier functionName)) = "uponEntry(" ++ functionName ++ ")"
-    display (Exiting (Identifier functionName)) = "uponExit(" ++ functionName ++ ")"
+    display (Entering (functionCall)) = "uponEntry(" ++ display functionCall ++ ")"
+    display (Exiting (functionCall)) = "uponExit(" ++ display functionCall ++ ")"
     display (ConditionDoesNotHold expression) = (display expression) ++ " == false" 
     display (ConditionHolds expression) = (display expression) ++ " == true" 
     display (LabelE expression) = display expression

@@ -1,4 +1,4 @@
-module CFG.CFG (State(..), Label(..), Transition(..), FunctionCFG(..), CFG(..), contractCFG) where
+module CFG.CFG (State(..), Label(..), Transition(..), FunctionCFG(..), CFG(..), contractCFG, FunctionCall(..)) where
 
 import Solidity.Solidity;
 
@@ -12,7 +12,7 @@ data State = BasicState {
      | ReturnState
      | FunctionCallState {
         label :: Int,
-        functionCalledName :: FunctionName
+        functionCall :: FunctionCall
         }
 --     | ContractCallState {
 --        label :: Int,
@@ -29,8 +29,9 @@ data State = BasicState {
     deriving (Eq, Ord, Show)
 
     
-data Label = Label Statement | LabelE Expression | ConditionHolds Expression | ConditionDoesNotHold Expression | Tau | Any | ReturnLabel Expression | ReturnVoid | Entering FunctionName | Exiting FunctionName deriving (Eq, Ord, Show)
+data Label = Label Statement | LabelE Expression | ConditionHolds Expression | ConditionDoesNotHold Expression | Tau | Any | ReturnLabel Expression | ReturnVoid | Entering FunctionCall | Exiting FunctionCall deriving (Eq, Ord, Show)
     
+data FunctionCall = FunctionCall FunctionName (Maybe (Either NameValueList ExpressionList)) deriving (Eq, Ord, Show)
   
 data Transition =
   Transition {
@@ -56,7 +57,7 @@ contractCFG (SolidityCode (SourceUnit sourceUnits)) =
                                 let functionCFGs = map (contractCFGFromContractDefinition) sourceUnits
                                     flattened = foldr (++) [] functionCFGs
                                     in CFG flattened
-contractCFG _ = CFG []
+--contractCFG _ = CFG []
 --------------------------------------------------------------
 --------------------------------------------------------------
 
@@ -178,30 +179,53 @@ cfgStepWithExpression (Ternary string expression1 expression2 expression3) cfg s
                             in (cfgWithTransition, dst transition)
 
 
-cfgStepWithExpression (FunctionCallNameValueList (Literal (PrimaryExpressionStringLiteral (StringLiteral functionName))) _) cfg state = addFunctionTransition (Identifier {unIdentifier = functionName}) cfg state
+-- (FunctionCallNameValueList (Literal (PrimaryExpressionStringLiteral (StringLiteral functionName))) _) cfg state = addFunctionTransition (Identifier {unIdentifier = functionName}) cfg 
 
-cfgStepWithExpression (FunctionCallNameValueList (MemberAccess expression functionName) _) cfg state =
-                            let (newCFG, newState) = cfgStepWithExpression expression cfg state
-                            in addFunctionTransition functionName newCFG newState
+cfgStepWithExpression (FunctionCallNameValueList (Literal (PrimaryExpressionIdentifier functionName)) (Just (NameValueList nameValueList))) cfg state =
+                            let expressions = map (snd) nameValueList
+                                (newCFG, newState) = cfgStepWithExpressions expressions cfg state
+                                functionCall = FunctionCall functionName (Just (Left (NameValueList nameValueList)))
+                            in addFunctionTransition functionCall newCFG newState
 
+cfgStepWithExpression (FunctionCallNameValueList (Literal (PrimaryExpressionIdentifier functionName)) (Nothing)) cfg state =  let functionCall = FunctionCall functionName Nothing
+                            in addFunctionTransition (functionCall) cfg state
 
-cfgStepWithExpression (FunctionCallExpressionList (Literal (PrimaryExpressionIdentifier identifier)) Nothing) cfg state = addFunctionTransition (identifier) cfg state
+cfgStepWithExpression (FunctionCallNameValueList (MemberAccess expression functionName) (Just (NameValueList nameValueList))) cfg state =
+                            let expressions = map (snd) nameValueList
+                                (newCFG, newState) = cfgStepWithExpressions expressions cfg state
+                                functionCall = FunctionCall functionName (Just (Left (NameValueList nameValueList)))
+                            in addFunctionTransition functionCall newCFG newState
 
-cfgStepWithExpression (FunctionCallExpressionList (Literal (PrimaryExpressionIdentifier identifier)) (Just expressionList)) cfg state =                         
+                            
+cfgStepWithExpression (FunctionCallNameValueList (MemberAccess expression functionName) (Nothing)) cfg state = let functionCall = FunctionCall functionName Nothing
+                            in addFunctionTransition (functionCall) cfg state
+
+--add transitions for each expression in name value list                            
+                            
+
+cfgStepWithExpression (FunctionCallExpressionList (Literal (PrimaryExpressionIdentifier functionName)) Nothing) cfg state = 
+                        let functionCall = FunctionCall functionName Nothing
+                            in addFunctionTransition (functionCall) cfg state
+
+cfgStepWithExpression (FunctionCallExpressionList (Literal (PrimaryExpressionIdentifier functionName)) (Just expressionList)) cfg state =                         
                         let rawExpressionList = unExpressionList expressionList
                             (cfgWithList, stateAfterList) = cfgStepWithExpressions rawExpressionList cfg state
-                            in addFunctionTransition (identifier) cfgWithList stateAfterList
+                            functionCall = FunctionCall functionName (Just (Right expressionList))
+                           in addFunctionTransition (functionCall) cfgWithList stateAfterList
 
 
+cfgStepWithExpression (FunctionCallExpressionList (MemberAccess expression functionName) Nothing) cfg state =                            
+                        let (newCFG, newState) = cfgStepWithExpression expression cfg state
+                            functionCall = FunctionCall functionName (Nothing)
+                           in addFunctionTransition functionCall newCFG newState
 
-cfgStepWithExpression (FunctionCallExpressionList (MemberAccess expression functionName) Nothing) cfg state =                            let (newCFG, newState) = cfgStepWithExpression expression cfg state
-                            in addFunctionTransition functionName newCFG newState
 
 cfgStepWithExpression (FunctionCallExpressionList (MemberAccess expression functionName) (Just expressionList)) cfg state =                            
                         let (newCFG, newState) = cfgStepWithExpression expression cfg state
                             rawExpressionList = unExpressionList expressionList
                             (cfgWithList, stateAfterList) = cfgStepWithExpressions rawExpressionList newCFG newState
-                            in addFunctionTransition (functionName) cfgWithList stateAfterList
+                            functionCall = FunctionCall functionName (Just (Right expressionList))
+                           in addFunctionTransition (functionCall) cfgWithList stateAfterList
 
 -- Literal primaryExpression  
 -- New TypeName                         
@@ -210,14 +234,14 @@ cfgStepWithExpression expression cfg state = (cfg, state)
 --------------------------------------------------------------
 --------------------------------------------------------------
                            
-addFunctionTransition :: FunctionName -> FunctionCFG -> State -> (FunctionCFG, State)
-addFunctionTransition functionName cfg state = 
-                        let entryTransition = Transition{src = state, dst = FunctionCallState{label = nextLabel cfg, functionCalledName = functionName}, event = Entering functionName}
+addFunctionTransition :: FunctionCall -> FunctionCFG -> State -> (FunctionCFG, State)
+addFunctionTransition (FunctionCall functionName maybeParameters) cfg state  = 
+                        let entryTransition = Transition{src = state, dst = FunctionCallState{label = nextLabel cfg, functionCall = (FunctionCall functionName maybeParameters)}, event = Entering (FunctionCall functionName maybeParameters)}
                             cfgWithEntryTransition = addTransition cfg entryTransition
-                            exitTransition = Transition{src = dst entryTransition, dst = BasicState{label = nextLabel cfgWithEntryTransition}, event = Exiting functionName}
+                            exitTransition = Transition{src = dst entryTransition, dst = BasicState{label = nextLabel cfgWithEntryTransition}, event = Exiting (FunctionCall functionName maybeParameters)}
                             cfgWithExitTransition = addState (addState (addTransition cfgWithEntryTransition exitTransition) (dst entryTransition)) (dst exitTransition)
                             in (cfgWithExitTransition, dst exitTransition)
- 
+                            
 
 --------------------------------------------------------------
 --------------------------------------------------------------
