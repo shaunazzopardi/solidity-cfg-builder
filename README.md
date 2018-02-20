@@ -3,7 +3,7 @@ A control-flow graph builder for Solidity smart contracts.
 
 ## Overview
 
-This package generates a control-flow graph from Solidity contracts. Control-flow graphs are helpful as a graphic representation of the semantics of programs, and are the basis of many static analysis approaches to optimizing and verifying programs. This package is the basis of a static analysis I am currently developing. 
+This package generates a control-flow graph from Solidity contracts. Control-flow graphs are helpful as a graphic representation of the semantics of programs, and are the basis of many static analysis approaches to optimizing and verifying programs. This package is the basis of a static analysis approach I am currently developing. 
 
 solidity-cfg-builder is developed in Haskell, utilising a Solidity syntax parser that is a (currently) slightly modified version of that used in the runtime verification tool for Solidity [contractLarva](https://github.com/gordonpace/contractLarva). The version of the parser used in the project is packaged in the project, and separately in the fork [contractLarva](https://github.com/shaunazzopardi/contractLarva). 
 
@@ -19,15 +19,19 @@ Compilation: Run the following command in the src folder:
 
 ## Tool usage:
 
+For correct results always make sure that the Solidity code compiles with a Solidity compiler.
+
+To use the tool execute:
+
 > solidity-cfg-builder &lt;solidity-code.sol&gt; &lt;cfg.gv&gt;
 
 ## License
 This project is licensed under the terms of the [Apache 2.0 license](LICENSE).
 
-## TODO
+## TODO (See Issues for an up-to-date list)
 1. Handle function modifiers
-2. Allow option to flatted CFGs with function calls
-
+2. Allow option to flatten CFGs with function calls
+3. Handle block of statements at end of function definition
 ----
 # FAQ and Common Problems
 
