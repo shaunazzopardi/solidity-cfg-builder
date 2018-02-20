@@ -19,7 +19,7 @@ Compilation: Run the following command in the src folder:
 
 ## Tool usage:
 
-For correct results always make sure that the solidity code compiles with a solidity compiler.
+For correct results always make sure that the Solidity code compiles with a Solidity compiler.
 
 To use the tool execute:
 
