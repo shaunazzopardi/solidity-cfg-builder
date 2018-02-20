@@ -551,8 +551,6 @@ instance Parseable Statement where
   display Break = "break;"
   display (Return me) = "return"++maybe "" (\e -> " "++display e) me++";"
   display Throw = "throw;"
-  display (Assert e) = "assert("++ display e ++");"
-  display (Require e) = "require("++ display e ++");"
 
   display (SimpleStatementExpression e) = display e++";"
   display (SimpleStatementVariableList il me) = "var " ++ display il ++ maybe "" (\e -> " = "++display e) me++";"
@@ -569,8 +567,6 @@ instance Parseable Statement where
       , const Break <$> (keyword "break" <* whitespace <* char ';')
       , const Throw <$> (keyword "throw" <* whitespace <* char ';')
       , Return <$> (keyword "return" *> whitespace *> ((Just <$> parser) <|> return Nothing) <* whitespace <* char ';')
-      , Require <$> (keyword "require" *> whitespace *> char '(' *> whitespace *> parser <* whitespace <* char ')' <* whitespace <* char ';')
-      , Assert <$> (keyword "assert" *> whitespace *> char '(' *> whitespace *> parser <* whitespace <* char ')' <* whitespace <* char ';')
       , do
           c <- keyword "if" *> whitespace *> char '(' *> whitespace *> parser <* whitespace <* char ')' <* whitespace
           t <- parser <* whitespace
@@ -660,6 +656,8 @@ instance Parseable Expression where
   display (Binary op e1 e2) = display e1 ++ " " ++ op ++ " " ++ display e2
 
   display (Ternary "?" e1 e2 e3) = display e1 ++"?"++display e2++":"++display e3
+--  display (Assert e) = "assert("++ display e ++");"
+--  display (Require e) = "require("++ display e ++");"
 
   parser = parserPrec 15
     where
@@ -730,13 +728,13 @@ instance Parseable Expression where
                     p  <- addBottomLevelOperators (MemberAccess p1 i)
                     return p
                   )
-              , try (
+              , try ( 
                   do
                     _ <- char '(' <* whitespace
                     result <- (
                         (char '{' *> whitespace *> (FunctionCallNameValueList p1 <$> (parser <* whitespace <* char '}' <* whitespace <* char ')'))) <|>
-                        (FunctionCallExpressionList p1 <$> (parser <* whitespace <* char ')'))
-                      )
+                          (FunctionCallExpressionList p1 <$> (parser <* whitespace <* char ')'))
+                        )   
                     p  <- addBottomLevelOperators (result)
                     return p
                   )

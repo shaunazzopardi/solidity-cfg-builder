@@ -279,8 +279,6 @@ data Statement
   | Break
   | Return (Maybe Expression)
   | Throw
-  | Assert Expression
-  | Require Expression
 
   | SimpleStatementExpression Expression
   | SimpleStatementVariableList IdentifierList (Maybe Expression)
@@ -322,6 +320,8 @@ data Expression
   | MemberAccess Expression Identifier
   | Literal PrimaryExpression
   | New TypeName
+--  | Assert Expression
+--  | Require Expression
   deriving (Eq, Ord, Show)
 
 -------------------------------------------------------------------------------
