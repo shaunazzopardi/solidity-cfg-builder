@@ -1,7 +1,7 @@
 module CFG.CFG (State(..), Label(..), Transition(..), FunctionCFG(..), CFG(..), contractCFG, FunctionCall(..)) where
 
 import Solidity.Solidity;
-
+import Data.List
 --import DEA.DEA;
 
 
@@ -29,7 +29,7 @@ data State = BasicState {
     deriving (Eq, Ord, Show)
 
     
-data Label = Label Statement | LabelE Expression | ConditionHolds Expression | ConditionDoesNotHold Expression | Tau | Any | ReturnLabel Expression | ReturnVoid | Entering FunctionCall | Exiting FunctionCall deriving (Eq, Ord, Show)
+data Label = Label Statement | LabelE Expression | ConditionHolds Expression | ConditionDoesNotHold Expression | Tau | Any | ReturnLabel Expression | ReturnVoid | Entering FunctionCall | Exiting FunctionCall | Assert Expression | Require Expression deriving (Eq, Ord, Show)
     
 data FunctionCall = FunctionCall FunctionName (Maybe (Either NameValueList ExpressionList)) deriving (Eq, Ord, Show)
   
@@ -45,7 +45,7 @@ data FunctionCFG = FunctionCFG{
     states :: [State],
     initial :: State,
     end :: [State]
-}
+} deriving (Eq, Ord, Show)
 
 data CFG = CFG [FunctionCFG]
 
@@ -55,9 +55,111 @@ data CFG = CFG [FunctionCFG]
 contractCFG :: SolidityCode -> CFG
 contractCFG (SolidityCode (SourceUnit sourceUnits)) = 
                                 let functionCFGs = map (contractCFGFromContractDefinition) sourceUnits
-                                    flattened = foldr (++) [] functionCFGs
-                                    in CFG flattened
+                                    functionCFGsFlattened = foldr (++) [] functionCFGs
+                                    in CFG (map (handleAssertAndRequires functionCFGsFlattened) functionCFGsFlattened)
 --contractCFG _ = CFG []
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+handleAssertAndRequires :: [FunctionCFG] -> FunctionCFG -> FunctionCFG
+handleAssertAndRequires (cfgs) cfg = let requireStates = [FunctionCallState label (FunctionCall (Identifier "require") params ) | FunctionCallState label (FunctionCall (Identifier "require") params ) <- (states cfg), not (requireIsOverridden cfgs)]
+                                         assertStates = [FunctionCallState label (FunctionCall (Identifier "assert") params ) | FunctionCallState label (FunctionCall (Identifier "assert") params ) <- (states cfg), not (assertIsOverridden cfgs)]
+                                         newCFGWithAssertAndRequire = functionCallStatesToAssertOrRequire (requireStates ++ assertStates) cfg
+                                       in newCFGWithAssertAndRequire
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+assertIsOverridden :: [FunctionCFG] -> Bool
+assertIsOverridden [] = False
+assertIsOverridden (cfg:cfgs) = if((functionName cfg) == "assert")
+                                    then True
+                                    else assertIsOverridden cfgs
+
+requireIsOverridden :: [FunctionCFG] -> Bool
+requireIsOverridden [] = False
+requireIsOverridden (cfg:cfgs) = if((functionName cfg) == "require")
+                                    then True
+                                    else requireIsOverridden cfgs
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+--data FunctionCall = FunctionCall FunctionName (Maybe (Either NameValueList ExpressionList)) deriving (Eq, Ord, Show)
+
+functionCallStatesToAssertOrRequire :: [State] -> FunctionCFG -> FunctionCFG
+functionCallStatesToAssertOrRequire [] cfg = cfg
+functionCallStatesToAssertOrRequire (s:ss) cfg = let newCFG = functionCallToAssertOrRequire s cfg
+                                                    in functionCallStatesToAssertOrRequire ss newCFG
+                                                                          
+functionCallToAssertOrRequire :: State -> FunctionCFG -> FunctionCFG
+functionCallToAssertOrRequire (FunctionCallState label functionCall) cfg =let uponEntryTransition = [t | t <- (transitions cfg), (dst t) == (FunctionCallState label functionCall)]
+                                                                              uponExitTransition = [t | t <- (transitions cfg), (src t) == (FunctionCallState label functionCall)]
+                                                                              partialNewTransitions = (((transitions cfg) \\ uponEntryTransition) \\ uponExitTransition)
+                                                                              partialNewStates = ((states cfg) \\ [FunctionCallState label functionCall])
+                                                                              newCFG = FunctionCFG{
+                                                                                           functionName = functionName cfg,
+                                                                                           transitions = partialNewTransitions,
+                                                                                           states = partialNewStates,
+                                                                                           initial = initial cfg,
+                                                                                           end = end cfg
+                                                                                       }
+                                                                    in if(length uponEntryTransition == 1 && length uponExitTransition == 1)
+                                                                          then let source = src $ head uponEntryTransition
+                                                                                   end = dst $ head uponExitTransition
+                                                                                   newNewCFG = cfgStepWithAssertOrRequire functionCall newCFG source end
+                                                                                  in if(newNewCFG == newCFG)
+                                                                                        then cfg
+                                                                                        else newNewCFG
+                                                                          else cfg--consider transitioning to error state
+
+                                                                          
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+cfgStepWithAssertOrRequire :: FunctionCall -> FunctionCFG -> State -> State -> FunctionCFG
+cfgStepWithAssertOrRequire (FunctionCall (Identifier "require") (Just (Right (ExpressionList [expression])))) cfg startState endState = 
+                                     cfgStepWithRequire expression cfg startState endState
+
+cfgStepWithAssertOrRequire (FunctionCall (Identifier "assert") (Just (Right (ExpressionList [expression])))) cfg startState endState = 
+                                     cfgStepWithAssert expression cfg startState endState
+
+cfgStepWithAssertOrRequire _ newCFG startState endState = newCFG                         
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+cfgStepWithAssert :: Expression -> FunctionCFG -> State -> State -> FunctionCFG
+cfgStepWithAssert expr cfg startState endState = 
+                    let (newCFG, newState) = (cfg, startState)--cfgStepWithExpression expr cfg startState
+                        transition1 = Transition{src = newState, dst = BasicState (nextLabel cfg), event = Assert expr}
+                        transition2 = Transition{src = (dst transition1), dst = ThrowState, event = ConditionDoesNotHold expr}          
+                        newCFG2 = addState (addTransition (addState (addTransition newCFG transition2) (dst transition2)) transition1) (dst transition1)
+                        transition3 = Transition{src = dst transition1, dst = endState, event = ConditionHolds expr}
+                        newCfgWithThrowing = (addState (addTransition newCFG2 transition3) (dst transition3)) 
+                        in newCfgWithThrowing
+          
+cfgStepWithRequire :: Expression -> FunctionCFG -> State -> State -> FunctionCFG          
+cfgStepWithRequire expr cfg startState endState = 
+                    let (newCFG, newState) = (cfg, startState)--cfgStepWithExpression expr cfg startState
+                        transition1 = Transition{src = newState, dst = BasicState (nextLabel cfg), event = Require expr}
+                        transition2 = Transition{src = (dst transition1), dst = ThrowState, event = ConditionDoesNotHold expr}                 
+                        newCFG2 = addState (addTransition (addState (addTransition newCFG transition2) (dst transition2)) transition1) (dst transition1)
+                        transition3 = Transition{src = dst transition1, dst = endState, event = ConditionHolds expr}
+                        newCfgWithThrowing = addState (addTransition newCFG2 transition3) (dst transition3)
+                        in newCfgWithThrowing
+
+
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+isAssert :: Expression -> Bool
+isAssert (Literal (PrimaryExpressionIdentifier (Identifier {unIdentifier = "assert"}))) = True
+isAssert _ = False
+
+isRequire :: Expression -> Bool
+isRequire (Literal (PrimaryExpressionIdentifier (Identifier {unIdentifier = "require"}))) = True
+isRequire _ = False
+
 --------------------------------------------------------------
 --------------------------------------------------------------
 
@@ -86,8 +188,8 @@ contractPartCFG (ContractPartFunctionDefinition (Just identifier) _ _ (_) (Just 
                                                       initial = BasicState 0,
                                                       end = []
                                                   }
-                                            (newCFG, _) = (cfgStepWithStatement (BlockStatement block) cfg (initial cfg))
-                                            in Just newCFG
+                                            (newCFG, state) = (cfgStepWithStatement (BlockStatement block) cfg (initial cfg))
+                                            in Just (addEndState newCFG state)
 
 contractPartCFG _ = Nothing
 
@@ -165,15 +267,15 @@ cfgStepWithExpression (Unary string expression) cfg state =
 
 cfgStepWithExpression (Binary string expression1 expression2) cfg state = 
                         let (newCFG1, newState1) = cfgStepWithExpression expression1 cfg state
-                            (newCFG, newState) = cfgStepWithExpression expression2 cfg newState1
+                            (newCFG, newState) = cfgStepWithExpression expression2 newCFG1 newState1
                             transition = Transition{src = newState, dst=BasicState{label = nextLabel newCFG}, event = LabelE (Binary string expression1 expression2)}
                             cfgWithTransition = addTransition (addState newCFG (dst transition)) transition
                             in (cfgWithTransition, dst transition)
 
 cfgStepWithExpression (Ternary string expression1 expression2 expression3) cfg state =
                         let (newCFG1, newState1) = cfgStepWithExpression expression1 cfg state
-                            (newCFG2, newState2) = cfgStepWithExpression expression2 cfg state
-                            (newCFG, newState) = cfgStepWithExpression expression3 cfg newState2
+                            (newCFG2, newState2) = cfgStepWithExpression expression2 newCFG1 newState1
+                            (newCFG, newState) = cfgStepWithExpression expression3 newCFG2 newState2
                             transition = Transition{src = newState, dst=BasicState{label = nextLabel newCFG}, event = LabelE (Ternary string expression1 expression2 expression3)}
                             cfgWithTransition = addTransition (addState newCFG (dst transition)) transition
                             in (cfgWithTransition, dst transition)
@@ -227,6 +329,7 @@ cfgStepWithExpression (FunctionCallExpressionList (MemberAccess expression funct
                             functionCall = FunctionCall functionName (Just (Right expressionList))
                            in addFunctionTransition (functionCall) cfgWithList stateAfterList
 
+                           
 -- Literal primaryExpression  
 -- New TypeName                         
 cfgStepWithExpression expression cfg state = (cfg, state)
@@ -256,23 +359,6 @@ cfgStepWithMaybeExpression (Just expression) cfg state = cfgStepWithExpression e
 cfgStepWithStatement :: Statement -> FunctionCFG -> State -> (FunctionCFG, State)
 --cfgStepWithStatement Nothing cfg state = (cfg, state)
                         
-cfgStepWithStatement (Assert expr) cfg state = 
-                    let (newCFG, newState) = cfgStepWithExpression expr cfg state
-                        transition1 = Transition{src = newState, dst = BasicState (nextLabel cfg), event = Label (Assert expr)}
-                        transition2 = Transition{src = (dst transition1), dst = ThrowState, event = ConditionDoesNotHold expr}                 
-                        newCFG2 = addState (addTransition (addState (addTransition newCFG transition2) (dst transition2)) transition1) (dst transition1)
-                        transition3 = Transition{src = dst transition1, dst = BasicState (nextLabel newCFG2), event = ConditionHolds expr}
-                        newCfgWithThrowing = (addState (addTransition newCFG2 transition3) (dst transition3)) 
-                        in ((addState newCfgWithThrowing) (dst transition3), (dst transition3))
-                        
-cfgStepWithStatement (Require expr) cfg state = 
-                    let (newCFG, newState) = cfgStepWithExpression expr cfg state
-                        transition1 = Transition{src = newState, dst = BasicState (nextLabel cfg), event = Label (Require expr)}
-                        transition2 = Transition{src = (dst transition1), dst = ThrowState, event = ConditionDoesNotHold expr}                 
-                        newCFG2 = addState (addTransition (addState (addTransition newCFG transition2) (dst transition2)) transition1) (dst transition1)
-                        transition3 = Transition{src = dst transition1, dst = BasicState (nextLabel newCFG2), event = ConditionHolds expr}
-                        newCfgWithThrowing = addEndState (addState (addTransition newCFG2 transition3) (dst transition3)) (dst transition3)
-                        in ((addState (addTransition newCfgWithThrowing transition3) (dst transition3)), (dst transition3))
                         
 
 cfgStepWithStatement Throw cfg state =  let transition = Transition{src = state, dst = ThrowState, event = Label Throw} 
@@ -393,16 +479,16 @@ cfgStepWithStatement (DoWhileStatement statement expression) cfg startState =
                         
                         
 cfgStepWithStatement (ForStatement (statement1, expression1, expression2) statement) cfg startState =  
-                    let (cfgWithStatement1, stateAfterStatement1) = cfgStepWithMaybeStatement statement1 cfg startState -- do first statement
-                        (cfgWithExpression1, stateAfterExpression1) = cfgStepWithMaybeExpression expression1 cfgWithStatement1 stateAfterStatement1 --check condition
+                    let (cfgWithStatement1, stateAfterInitialStatement) = cfgStepWithMaybeStatement statement1 cfg startState -- do first statement
+                        (cfgWithExpression1, stateAfterConditionCheck) = cfgStepWithMaybeExpression expression1 cfgWithStatement1 stateAfterInitialStatement --check condition
                         conditionTrueState = BasicState{label = nextLabel cfgWithExpression1}
-                        conditionCheckTrueTransition = Transition{src = stateAfterExpression1, dst = conditionTrueState, event = if(expression1 /= Nothing) 
+                        conditionCheckTrueTransition = Transition{src = stateAfterConditionCheck, dst = conditionTrueState, event = if(expression1 /= Nothing) 
                                                             then let Just e = expression1
                                                                     in ConditionHolds e
                                                             else Tau}--no condition means true
                         cfgWithTrueState = addTransition (addState cfgWithExpression1 conditionTrueState) conditionCheckTrueTransition --add condition holds transition
-                        conditionFalseState = BasicState{label = nextLabel cfg}
-                        conditionCheckFalseTransition = Transition{src = stateAfterExpression1, dst = conditionFalseState, event = if(expression1 /= Nothing) 
+                        conditionFalseState = BasicState{label = nextLabel cfgWithTrueState}
+                        conditionCheckFalseTransition = Transition{src = stateAfterConditionCheck, dst = conditionFalseState, event = if(expression1 /= Nothing) 
                                                           then let Just e = expression1
                                                                 in ConditionDoesNotHold e
                                                           else Tau} --will not be added in this case
@@ -410,13 +496,14 @@ cfgStepWithStatement (ForStatement (statement1, expression1, expression2) statem
                                                 then addTransition (addState cfgWithTrueState conditionTrueState) conditionCheckFalseTransition 
                                                 else cfgWithTrueState --condition is always true so no false transition
                         continueFromState = BasicState{label = nextLabel cfgWithFalseState} --state to take in case of continue
-                        (cfgWithStatement, endState) = cfgFromStatementWithContinueAndBreak statement cfgWithFalseState conditionTrueState continueFromState conditionFalseState
+                        cfgWithContinueState = addState cfgWithFalseState continueFromState
+                        (cfgWithStatement, endState) = cfgFromStatementWithContinueAndBreak statement cfgWithContinueState conditionTrueState continueFromState conditionFalseState
                         finishedCFG = if(endState == conditionFalseState) --if statement always end in break
                                         then cfgWithStatement --then existing CFG is enough
                                         else let fromEndToContinueTransition = Transition{src = endState, dst = continueFromState, event = Tau}--else connect end state to continuefrom state (note that continuefrom may have been used in some banch of statement, thus why we do this)
                                                  cfgWithTransition = addTransition cfgWithStatement fromEndToContinueTransition 
                                                  (cfgWithExpression2, afterExpression2State) = cfgStepWithMaybeExpression expression2 cfgWithTransition continueFromState --perform expression2 before checking expression1 again
-                                                 transitionFromEndToStart = Transition{src = afterExpression2State, dst = stateAfterExpression1, event = Tau}
+                                                 transitionFromEndToStart = Transition{src = afterExpression2State, dst = stateAfterInitialStatement, event = Tau}
                                                  in  addTransition cfgWithExpression2 transitionFromEndToStart
                         in (finishedCFG, conditionFalseState) 
                         
@@ -515,6 +602,7 @@ alphabet cfg = [event transition | transition <- (transitions cfg)]
 --TODO
 --need to handle function modifiers
 --delegatecall and call not being parsed
+
 
 
                         
