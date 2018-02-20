@@ -86,6 +86,22 @@ instance Parseable Label where
                     char ')'
                     spaces
                     return (Exiting functionCall)
+            <||> do string "assert"
+                    spaces
+                    char '('
+                    expression <- parser
+                    spaces
+                    char ')'
+                    spaces
+                    return (Assert expression)
+            <||> do string "require"
+                    spaces
+                    char '('
+                    expression <- parser
+                    spaces
+                    char ')'
+                    spaces
+                    return (Require expression)
             <||> do expression <- parser
                     spaces
                     string "=="
@@ -104,6 +120,8 @@ instance Parseable Label where
     display ReturnVoid = "return"
     display (Entering (functionCall)) = "uponEntry(" ++ display functionCall ++ ")"
     display (Exiting (functionCall)) = "uponExit(" ++ display functionCall ++ ")"
+    display (Assert expression) = "assert(" ++ display expression ++ ")"
+    display (Require expression) = "require(" ++ display expression ++ ")"
     display (ConditionDoesNotHold expression) = (display expression) ++ " == false" 
     display (ConditionHolds expression) = (display expression) ++ " == true" 
     display (LabelE expression) = display expression
