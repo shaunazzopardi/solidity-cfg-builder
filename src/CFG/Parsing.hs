@@ -19,13 +19,13 @@ p <||> q =  try p <|> q
 
 
 instance Parseable State where
-    parser = do no <- nat
+    parser = do no <- many alphaNum 
                 spaces *> char ':' <* spaces
  --               address <- manyTill alphaNum (string "#")
                 functionName <- manyTill alphaNum (char '(' <* spaces)
                 (char ')')
                 return (FunctionCallState no (FunctionCall (Identifier functionName) Nothing))
-             <||> do no <- nat
+             <||> do no <- many alphaNum
                      spaces *> char ':' <* spaces
                      functionCall <- parser
                      return (FunctionCallState no functionCall)
@@ -33,7 +33,7 @@ instance Parseable State where
                      return ThrowState
              <||> do string "return"
                      return ReturnState
-             <||> do no <- nat
+             <||> do no <- many alphaNum
                      return (BasicState{label = no})
     display ThrowState = "throw"
     display ReturnState = "return"

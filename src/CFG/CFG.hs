@@ -6,12 +6,12 @@ import Data.List
 
 
 data State = BasicState {
-            label :: Int
+            label :: String
             }
      | ThrowState
      | ReturnState
      | FunctionCallState {
-        label :: Int,
+        label :: String,
         functionCall :: FunctionCall
         }
 --     | ContractCallState {
@@ -165,8 +165,9 @@ isRequire _ = False
 
 contractCFGFromContractDefinition :: SourceUnit1 -> [FunctionCFG]
 contractCFGFromContractDefinition (SourceUnit1_ContractDefinition contractDefinition) = 
-                                            let cfgs = contractParts contractDefinition
-                                                in justifyList (map (contractPartCFG) cfgs)
+                                            let contractPartss = contractParts contractDefinition
+                                                modifierCFGs = justifyList (map (parseModifierCFG) contractPartss)
+                                                in justifyList (map (parseFunctionCFG modifierCFGs) contractPartss)
 contractCFGFromContractDefinition _ = []
 --------------------------------------------------------------
 --------------------------------------------------------------
@@ -179,19 +180,124 @@ justifyList ((Nothing):rest) = justifyList rest
 --------------------------------------------------------------
 --------------------------------------------------------------
 
-contractPartCFG :: ContractPart -> Maybe FunctionCFG
-contractPartCFG (ContractPartFunctionDefinition (Just identifier) _ _ (_) (Just block)) = 
+parseFunctionCFG :: [FunctionCFG] -> ContractPart -> Maybe FunctionCFG
+--TODO handle input parameters
+parseFunctionCFG modifierCFGs (ContractPartFunctionDefinition (Just identifier) _ functionDefinitionTags (_) (Just block)) = 
                                         let cfg = FunctionCFG{
                                                       functionName = unIdentifier identifier,
                                                       transitions = [],
-                                                      states = [BasicState 0],
-                                                      initial = BasicState 0,
+                                                      states = [BasicState (show 0)],
+                                                      initial = BasicState (show 0),
+                                                      end = []
+                                                  }
+                                            (newCFG, state) = (cfgStepWithStatement (BlockStatement block) cfg (initial cfg))
+                                            finalCFG = (addEndState newCFG state)
+                                            relevantModifierCFGs = respectiveModifierCFGs functionDefinitionTags modifierCFGs
+                                            in Just (addModifiersControlFlow finalCFG relevantModifierCFGs)
+                                            
+                                            
+parseFunctionCFG modifierCFGs (ContractPartFunctionDefinition (Nothing) _ functionDefinitionTags (_) (Just block)) = 
+                                        let cfg = FunctionCFG{
+                                                      functionName = "fallbackfunction",
+                                                      transitions = [],
+                                                      states = [BasicState (show 0)],
+                                                      initial = BasicState (show 0),
+                                                      end = []
+                                                  }
+                                            (newCFG, state) = (cfgStepWithStatement (BlockStatement block) cfg (initial cfg))
+                                            finalCFG = (addEndState newCFG state)
+                                            relevantModifierCFGs = respectiveModifierCFGs functionDefinitionTags modifierCFGs
+                                            in Just (addModifiersControlFlow finalCFG relevantModifierCFGs)
+                                            
+
+parseFunctionCFG _ _ = Nothing
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+parseModifierCFG (ContractPartModifierDefinition modifierName maybeParameterList block) = 
+                                        let cfg = FunctionCFG{
+                                                      functionName = unIdentifier modifierName,
+                                                      transitions = [],
+                                                      states = [BasicState (show 0)],
+                                                      initial = BasicState (show 0),
                                                       end = []
                                                   }
                                             (newCFG, state) = (cfgStepWithStatement (BlockStatement block) cfg (initial cfg))
                                             in Just (addEndState newCFG state)
 
-contractPartCFG _ = Nothing
+parseModifierCFG _ = Nothing
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+--FunctionDefinitionTagModifierInvocation ModifierInvocation
+--data ModifierInvocation =
+--  ModifierInvocation {
+--    modifierInvocationIdentifier :: Identifier,
+--    modifierInvocationParameters :: Maybe ExpressionList
+--  } deriving (Show, Eq, Ord)
+
+respectiveModifierCFGs :: [FunctionDefinitionTag] -> [FunctionCFG] -> [FunctionCFG]
+respectiveModifierCFGs _ [] = []
+respectiveModifierCFGs [] _ = []
+respectiveModifierCFGs ftags cfgs = [c | c <- cfgs, (FunctionDefinitionTagModifierInvocation (ModifierInvocation (Identifier name) maybeParameters)) <- ftags, name == functionName c]
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+addModifiersControlFlow :: FunctionCFG -> [FunctionCFG] -> FunctionCFG
+addModifiersControlFlow functionCFG [] = functionCFG
+addModifiersControlFlow functionCFG (m:modifierCFGs) = let modifiedCFG = addModifierControlFlow (functionName m) functionCFG m
+                                                           in addModifiersControlFlow modifiedCFG modifierCFGs
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+addModifierControlFlow :: String -> FunctionCFG -> FunctionCFG -> FunctionCFG
+addModifierControlFlow modifierName functionCFG modifierCFG = let placeholderTransitions = [transition | transition <- transitions modifierCFG, (event transition) == Label PlaceholderStatement]
+                                                    in addModifierControlFlowAtTransitions modifierName 0 placeholderTransitions functionCFG modifierCFG
+                            
+                                         
+
+addModifierControlFlowAtTransitions :: String -> Int -> [Transition] -> FunctionCFG -> FunctionCFG -> FunctionCFG
+addModifierControlFlowAtTransitions modifierName prefix [t] functionCFG modifierCFG = addModifierControlFlowAtTransition (modifierName ++ show prefix) t functionCFG modifierCFG  
+addModifierControlFlowAtTransitions modifierName prefix (t:placeholderTransitions) functionCFG modifierCFG =
+                                                            let cfg = addModifierControlFlowAtTransition (modifierName ++ (show (prefix))) t functionCFG modifierCFG    
+                                                            in addModifierControlFlowAtTransitions modifierName (prefix + 1) (placeholderTransitions) functionCFG cfg
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+addModifierControlFlowAtTransition :: String -> Transition -> FunctionCFG -> FunctionCFG -> FunctionCFG
+addModifierControlFlowAtTransition prefix (Transition from to (Label PlaceholderStatement)) functionCFG modifierCFG = 
+                                            let prependedCFG = prependStateLabelsWith prefix functionCFG
+                                                in FunctionCFG{
+                                                    functionName = functionName functionCFG,
+                                                    transitions = ((transitions modifierCFG) \\ [(Transition from to (Label PlaceholderStatement))]) 
+                                                                ++ (transitions prependedCFG)
+                                                                ++ [(Transition from (initial prependedCFG) Tau)]
+                                                                ++ [(Transition source to Tau) | source <- (end prependedCFG)],
+                                                    states = (states modifierCFG) ++ (states prependedCFG),
+                                                    initial = initial modifierCFG,
+                                                    end = end modifierCFG
+                                                }
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+prependStateLabelsWith :: String -> FunctionCFG -> FunctionCFG
+prependStateLabelsWith prefix functionCFG = FunctionCFG{
+                                                functionName = functionName functionCFG,
+                                                transitions = [(Transition (prependStateLabelWith prefix source) (prependStateLabelWith prefix dest) ev) | Transition source dest ev <- transitions functionCFG],
+                                                states = [prependStateLabelWith prefix state | state <- states functionCFG],
+                                                initial = prependStateLabelWith prefix (initial functionCFG),
+                                                end = [prependStateLabelWith prefix state | state <- end functionCFG]
+                                            }
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+prependStateLabelWith :: String -> State -> State
+prependStateLabelWith prefix (BasicState label) = BasicState (prefix ++ label)
+prependStateLabelWith prefix (FunctionCallState label functionName) = FunctionCallState (prefix ++ label) functionName
 
 --------------------------------------------------------------
 --------------------------------------------------------------
@@ -244,7 +350,8 @@ addEndState cfg state = FunctionCFG {
 --------------------------------------------------------------
 --------------------------------------------------------------
 
-nextLabel cfg = length (states cfg)
+nextLabel :: FunctionCFG -> String
+nextLabel cfg = show (length (states cfg))
 --------------------------------------------------------------
 --------------------------------------------------------------
 
