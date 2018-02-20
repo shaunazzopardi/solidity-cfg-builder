@@ -37,6 +37,17 @@ parseIO filename = either (fail . (parseError ++) . show) return . parse parser 
   where
     parseError = "Error during parsing of <"++filename++">\n"
     
+mainSA inFile outFile= 
+  do
+    let 
+    inputText <- readFile inFile
+      `failWith` ("Cannot read Solidity file <"++inFile++">")
+    solidityCode <- parseIO inFile inputText
+    let outCode = display (contractCFG solidityCode)
+    writeFile outFile (outCode)
+      `failWith` ("Cannot write to Solidity file <"++outFile++">")
+    putStrLn ("Created contract-flow graph file <"++outFile++">")
+  `catch` (putStrLn . ioeGetErrorString)
 
 main =
   do
