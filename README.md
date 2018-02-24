@@ -29,9 +29,10 @@ To use the tool execute:
 This project is licensed under the terms of the [Apache 2.0 license](LICENSE).
 
 ## TODO (See Issues for an up-to-date list)
-1. Handle function modifiers
-2. Allow option to flatten CFGs with function calls
+1. <s>Handle function modifiers</s>
+2. Allow option to flatten CFGs with function calls (consider also contract inheritance)
 3. Handle block of statements at end of function definition
+4. Event triggering is being parsed as a function call. Post-process to show triggerring of event explicitly.
 ----
 # FAQ and Common Problems
 
