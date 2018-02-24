@@ -1,5 +1,6 @@
 -- Copyright 2017 Gordon J. Pace and Joshua Ellul
 --
+-- Edited by Shaun Azzopardi 2018
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
 -- You may obtain a copy of the License at
@@ -642,6 +643,7 @@ instance Parseable Expression where
   display (Literal e) = display e
   display (FunctionCallNameValueList e mvs) = display e ++ "({"++maybe "" display mvs++"})"
   display (FunctionCallExpressionList e mvs) = display e ++ "("++maybe "" display mvs++")"
+  display (TypeCasting elemType e) = display elemType ++ "("++ display e ++")"
 
   display (Unary "delete" e) = "delete "++display e
   display (Unary "()++" e) = display e++"++"
@@ -743,7 +745,10 @@ instance Parseable Expression where
           parserPrecBasic :: Parser Expression
           parserPrecBasic =
             choice
-              [ try $ New <$> (keyword "new" *> whitespace *> parser)
+              [do elemType <- whitespace *> parser <* whitespace <* char '('
+                  expression <- (whitespace *> parser <* whitespace <* char ')')
+                  return (TypeCasting elemType expression)
+              , try $ New <$> (keyword "new" *> whitespace *> parser)
               , try $ Unary "()" <$> (char '(' *> whitespace *> parserPrec 15 <* whitespace <* char ')')
               , Literal <$> parser
               ]
