@@ -52,8 +52,8 @@ mainSA inFile outFile=
 main =
   do
     arguments <- getArgs
-    ifNot (length arguments == 3)
-      ("Usage: <specification> <input solidity file> <output solidity file>")
+    ifNot (length arguments == 2)
+      ("Usage: <input solidity file> <output solidity file>")
     let [inFile, outFile] = arguments
     inputText <- readFile inFile
       `failWith` ("Cannot read Solidity file <"++inFile++">")
