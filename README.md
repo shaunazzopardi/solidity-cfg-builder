@@ -21,9 +21,9 @@ Compilation: Run the following command in the src folder:
 
 For correct results always make sure that the Solidity code compiles with a Solidity compiler.
 
-To use the tool execute:
+To use the tool pass the location of a solidity file and the preferred location of the output to the executable, e.g. execute:
 
-> solidity-cfg-builder &lt;solidity-code.sol&gt; &lt;cfg.gv&gt;
+> "./solidity-cfg-builder" &lt;solidity-code.sol&gt; &lt;cfg.gv&gt;
 
 ## License
 This project is licensed under the terms of the [Apache 2.0 license](LICENSE).
