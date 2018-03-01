@@ -661,7 +661,12 @@ instance Parseable Expression where
 --  display (Assert e) = "assert("++ display e ++");"
 --  display (Require e) = "require("++ display e ++");"
 
-  parser = parserPrec 15
+  parser = try (
+            do
+                elemType <- parser <* whitespace <* char '('
+                expression <- whitespace *> parser <* whitespace <* char ')'
+                return (TypeCasting elemType expression)
+            ) <|> parserPrec 15
     where
       anyString ss = choice (map (try . string) (init ss) ++ [string $ last ss])
       binaryOperators n ops =
@@ -745,10 +750,7 @@ instance Parseable Expression where
           parserPrecBasic :: Parser Expression
           parserPrecBasic =
             choice
-              [do elemType <- whitespace *> parser <* whitespace <* char '('
-                  expression <- (whitespace *> parser <* whitespace <* char ')')
-                  return (TypeCasting elemType expression)
-              , try $ New <$> (keyword "new" *> whitespace *> parser)
+              [ try $ New <$> (keyword "new" *> whitespace *> parser)
               , try $ Unary "()" <$> (char '(' *> whitespace *> parserPrec 15 <* whitespace <* char ')')
               , Literal <$> parser
               ]
