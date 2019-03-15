@@ -91,7 +91,7 @@ instance Parseable FunctionCall where
     display (OutsideFunctionCall expression functionName (Just (Left nameValueList))) = display expression ++ "." ++ display functionName ++ "(" ++ (display nameValueList) ++ ")"
     display (OutsideFunctionCall expression functionName (Just (Right expressionList))) = display expression ++ "." ++ display functionName ++ "(" ++ (display expressionList) ++ ")"
 
-instance Parseable Label where
+instance Parseable Condition where
     parser =     do expression <- parser
                     spaces
                     string "=="
@@ -127,10 +127,10 @@ instance Parseable Transition where
                 char '='
                 spaces
                 char '"'
-                event <- parser
+                condition <- parser
                 char '"'
-                return (Transition (src) (dst) (event))
-    display (Transition src dst event) = (display src) ++ " -> " ++ (display dst) ++ " [label = \"" ++ (display event) ++ "\"];\n"
+                return (Transition (src) (dst) (condition))
+    display (Transition src dst condition) = (display src) ++ " -> " ++ (display dst) ++ " [label = \"" ++ (display condition) ++ "\"];\n"
 
 
 --data FunctionSignature = FunctionSignature{
