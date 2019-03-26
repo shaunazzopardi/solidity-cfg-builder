@@ -210,9 +210,9 @@ instance Parseable FunctionCFG where
                 return FunctionCFG{signature = signat, transitions = transitionList, states = statesFromTransitions transitionList [], initial = initialState, end = endStates}
 
     display cfg = "digraph \"" ++ display (signature cfg) ++ "\"{\n" ++
-                    "initial -> " ++ display (initial cfg) ++ ";\n" ++
+              --      "initial -> " ++ display (initial cfg) ++ ";\n" ++
                     foldr (++) "" (map display (transitions cfg)) ++
-                    foldr (++) "" [display state ++ " -> end" ++ ";\n" | state <- (nub (end cfg))] ++
+                --    foldr (++) "" [display state ++ " -> end" ++ ";\n" | state <- (nub (end cfg))] ++
                     foldr (++) "" (nub [display (ExpressionState label expr) ++ "[style=filled, color=gray]" ++ ";\n" | Transition (ExpressionState label expr) _ _ <- (transitions cfg)]) ++
                     foldr (++) "" (nub [display (ExpressionState label expr) ++ "[style=filled, color=gray]" ++ ";\n" | Transition _ (ExpressionState label expr) _ <- (transitions cfg)]) ++
                     foldr (++) "" (nub [display (FunctionCallState label expr) ++ "[style=filled, color=lightblue]" ++ ";\n" | Transition _ (FunctionCallState label expr) _ <- (transitions cfg), isOutsideFunctionCall expr])
