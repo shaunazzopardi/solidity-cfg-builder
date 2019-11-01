@@ -1,6 +1,5 @@
 -- Copyright 2017 Gordon J. Pace and Joshua Ellul
 --
--- Edited by Shaun Azzopardi 2018
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
 -- You may obtain a copy of the License at
@@ -22,6 +21,7 @@ module Solidity.Solidity (
     SourceUnit (..),
       SourceUnit1 (..),
     PragmaDirective (..),
+      VersionComparator (..), Version (..),
     ImportDirective (..),
       ImportDirective1(..), Import (..),
     ContractDefinition (..),
@@ -45,7 +45,7 @@ module Solidity.Solidity (
 
   FunctionName, VariableName, ContractName, ModifierName,
 
-  untypeParameterList, typeParameterList
+  untypeParameterList, typeParameterList, addMemoryLocationToParametersList
 ) where
 
 import Data.Maybe
@@ -70,10 +70,21 @@ data SourceUnit1
   deriving (Show, Eq, Ord)
 
 -------------------------------------------------------------------------------
--- PragmaDirective = 'pragma' Identifier ([^;]+) ';'
--- Pragma actually parses anything up to the trailing ';' to be fully forward-compatible.
+-- VersionComparator = '^' | '>' | '<' | '<=' | '>='
 
-newtype PragmaDirective = PragmaDirective (Identifier, String) deriving (Show, Eq, Ord)
+data VersionComparator = Less | More | Equal | LessOrEqual | MoreOrEqual deriving (Show, Eq, Ord)
+
+-- Version = VersionComparator ([0-9]+\.)+
+
+data Version = Version VersionComparator [Int] deriving (Show, Eq, Ord)
+
+-- PragmaDirective = 'pragma' ('solidity' | 'experimental' ) 
+--                       ( (VersionComparator ' ' Version) ('||' (VersionComparator ' ' Version))*
+--                        | (VersionComparator ' ' Version) (' ' (VersionComparator ' ' Version))*) ';'
+
+data PragmaDirective = SolidityPragmaConjunction [Version] 
+                     | SolidityPragmaDisjunction [Version] 
+                     | ExperimentalPragma String deriving (Show, Eq, Ord)
 
 -------------------------------------------------------------------------------
 -- ImportDirective = 'import' StringLiteral ('as' Identifier)? ';'
@@ -111,6 +122,7 @@ data ContractDefinition =
 --    = 'using' Identifier 'for' ('*' | TypeName) ';'
 --    | 'struct' Identifier '{' ( VariableDeclaration ';' (VariableDeclaration ';')* )? '}'
 --    | 'modifier' Identifier ParameterList? Block
+--    | 'constructor' ParameterList ( FunctionDefinitionTag )* ( ';' | Block )
 --    | 'function' Identifier? ParameterList  ( FunctionDefinitionTag )* ( 'returns' ParameterList )? ( ';' | Block )
 --    | 'enum' Identifier '{' EnumValue? (',' EnumValue)* '}'
 --    | 'event' Identifier IndexedParameterList 'anonymous'? ';'
@@ -120,6 +132,7 @@ data ContractPart
   = ContractPartUsingForDeclaration Identifier (Maybe TypeName)
   | ContractPartStructDefinition Identifier [VariableDeclaration]
   | ContractPartModifierDefinition Identifier (Maybe ParameterList) Block
+  | ContractPartConstructorDefinition ParameterList [FunctionDefinitionTag] (Maybe Block)
   | ContractPartFunctionDefinition (Maybe Identifier) ParameterList [FunctionDefinitionTag] (Maybe ParameterList) (Maybe Block)
   | ContractPartEnumDefinition Identifier [EnumValue]
   | ContractPartEventDefinition Identifier IndexedParameterList Bool
@@ -185,12 +198,13 @@ data IndexedParameter = IndexedParameter {
 newtype UntypedParameterList = UntypedParameterList { fromUntypedParameterList :: [Identifier] } deriving (Eq, Ord, Show)
 
 -------------------------------------------------------------------------------
--- ParameterList = '(' ( TypeName Identifier? (',' TypeName Identifier?)* )? ')'
+-- ParameterList = '(' ( TypeName StorageLocation? Identifier? (',' TypeName StorageLocation? Identifier?)* )? ')'
 
 newtype ParameterList = ParameterList [Parameter] deriving (Eq, Ord, Show)
 
 data Parameter = Parameter {
     parameterType :: TypeName,
+    parameterStorageLocation :: Maybe StorageLocation,
     parameterIdentifier :: Maybe Identifier
   } deriving (Show, Eq, Ord)
 
@@ -230,9 +244,9 @@ data TypeName
 data UserDefinedTypeName = UserDefinedTypeName [Identifier] deriving (Eq, Ord, Show)
 
 -------------------------------------------------------------------------------
--- StorageLocation = 'memory' | 'storage'
+-- StorageLocation = 'memory' | 'storage' | 'calldata'
 
-data StorageLocation = Memory | Storage deriving (Show, Eq, Ord)
+data StorageLocation = Memory | Storage | CallData deriving (Show, Eq, Ord)
 
 -------------------------------------------------------------------------------
 -- StateMutability = 'internal' | 'external' | 'pure' | 'constant' | 'view' | 'payable'
@@ -265,6 +279,7 @@ newtype Block = Block [Statement] deriving (Eq, Ord, Show)
 -- Break = 'break'
 -- Return = 'return' Expression?
 -- Throw = 'throw'
+-- EmitStatement = 'emit' Expression
 -- SimpleStatement =
 --    Expression | ('var' IdentifierList ( '=' Expression ) | VariableDeclaration ( '=' Expression )?
 data Statement
@@ -280,10 +295,13 @@ data Statement
   | Break
   | Return (Maybe Expression)
   | Throw
+  | EmitStatement Expression
 
   | SimpleStatementExpression Expression
   | SimpleStatementVariableList IdentifierList (Maybe Expression)
-  | SimpleStatementVariableDeclaration VariableDeclaration (Maybe Expression)
+ -- | SimpleStatementVariableDeclaration VariableDeclaration (Maybe Expression)
+  | SimpleStatementVariableDeclarationList [Maybe VariableDeclaration] [Expression]
+  | SimpleStatementVariableAssignmentList [Maybe Identifier] [Expression]
   deriving (Eq, Ord, Show)
 
 -------------------------------------------------------------------------------
@@ -318,12 +336,9 @@ data Expression
   | Ternary String Expression Expression Expression
   | FunctionCallNameValueList Expression (Maybe NameValueList)
   | FunctionCallExpressionList Expression (Maybe ExpressionList)
-  | TypeCasting ElementaryTypeName Expression
   | MemberAccess Expression Identifier
   | Literal PrimaryExpression
   | New TypeName
---  | Assert Expression
---  | Require Expression
   deriving (Eq, Ord, Show)
 
 -------------------------------------------------------------------------------
@@ -418,7 +433,7 @@ type ElementaryTypeNameExpression = ElementaryTypeName
 -- Ufixed = 'ufixed' | ( 'ufixed' DecimalNumber 'x' DecimalNumber )
 
 data ElementaryTypeName
-  = AddressType | BoolType | StringType | VarType
+  = AddressPayableType | AddressType | BoolType | StringType | VarType
   | IntType (Maybe Integer) | UintType (Maybe Integer) | BytesType (Maybe Integer)
   | ByteType | FixedType (Maybe (Integer, Integer)) | UfixedType (Maybe (Integer, Integer))
   deriving (Eq, Ord, Show)
@@ -463,6 +478,7 @@ typeParameterList (UntypedParameterList ups) (ParameterList tps) =
       repeat (
         Parameter {
           parameterType = TypeNameUserDefinedTypeName (UserDefinedTypeName [Identifier "undefined"]),
+          parameterStorageLocation = Nothing,
           parameterIdentifier = Just (Identifier "undefined")
         }
       )
@@ -471,5 +487,19 @@ typeParameterList (UntypedParameterList ups) (ParameterList tps) =
 untypeParameterList :: ParameterList -> UntypedParameterList
 untypeParameterList (ParameterList ps) = UntypedParameterList $ map (fromJust . parameterIdentifier) ps
 
+-- -------------------------------------------------------------------------------
+
+addMemoryLocationToListOfParameters :: [Parameter] -> [Parameter]
+addMemoryLocationToListOfParameters [] = []
+addMemoryLocationToListOfParameters ((Parameter (TypeNameArrayTypeName t e) Nothing id):rest) = let newRest = (addMemoryLocationToListOfParameters rest)
+                                                                                               in ((Parameter (TypeNameArrayTypeName t e) (Just Memory) id): newRest)
+addMemoryLocationToListOfParameters ((Parameter (TypeNameElementaryTypeName StringType) Nothing id):rest) = let newRest = (addMemoryLocationToListOfParameters rest)
+                                                                                                            in ((Parameter (TypeNameElementaryTypeName StringType) (Just Memory) id): newRest)
+addMemoryLocationToListOfParameters ((Parameter (TypeNameElementaryTypeName (BytesType no)) Nothing id):rest) = let newRest = (addMemoryLocationToListOfParameters rest)
+                                                                                                                in ((Parameter (TypeNameElementaryTypeName (BytesType no)) (Just Memory) id): newRest)
+addMemoryLocationToListOfParameters (x:rest) = let newRest = (addMemoryLocationToListOfParameters rest)
+                                                in (x:newRest)
 
 
+addMemoryLocationToParametersList :: ParameterList -> ParameterList
+addMemoryLocationToParametersList (ParameterList ps) = ParameterList (addMemoryLocationToListOfParameters ps)
