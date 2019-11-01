@@ -76,7 +76,7 @@ contractCFG :: SolidityCode -> CFG
 contractCFG (SolidityCode (SourceUnit sourceUnits)) =
                                 let functionCFGs = map (contractCFGFromSource) sourceUnits
                                     functionCFGsFlattened = foldr (++) [] functionCFGs
-                                    in CFG (map addEndStates functionCFGsFlattened)
+                                    in CFG functionCFGsFlattened
 
 --------------------------------------------------------------
 --------------------------------------------------------------
@@ -93,7 +93,7 @@ contractCFGFromContractDefinition contractDefinition =
                                                 modifierCFGs = justifyList (map (parseModifierCFG) contractPartss)
                                                 properFunctionsCFGs = justifyList (map (parseFunctionCFG modifierCFGs) contractPartss)
                                                 withProperAssertAndRequires = map (handleAssertAndRequires properFunctionsCFGs) properFunctionsCFGs
-                                              in map (handleFalseFunctionCalls withProperAssertAndRequires) withProperAssertAndRequires
+                                              in map addEndStates (map (handleFalseFunctionCalls withProperAssertAndRequires) withProperAssertAndRequires)
 --------------------------------------------------------------
 --------------------------------------------------------------
 --check that if it is a local function call, but there is no local function with that name then treat it as an outside function call state, for soundness
@@ -236,7 +236,7 @@ addEndStates fcfg = FunctionCFG{
 --------------------------------------------------------------
 
 hasNoOutgoingTransitions :: State -> FunctionCFG -> Bool
-hasNoOutgoingTransitions s fcfg = null [t | t <- transitions fcfg, src t == s]
+hasNoOutgoingTransitions s fcfg = [] == [t | t <- transitions fcfg, src t == s]
 
 --------------------------------------------------------------
 --------------------------------------------------------------
@@ -297,6 +297,7 @@ addModifierControlFlow (Identifier modifierName) functionCFG modifierCFG = let p
 
 
 addModifierControlFlowAtTransitions :: String -> Int -> [State] -> FunctionCFG -> FunctionCFG -> FunctionCFG
+addModifierControlFlowAtTransitions modifierName prefix [] functionCFG modifierCFG = functionCFG
 addModifierControlFlowAtTransitions modifierName prefix [s] functionCFG modifierCFG = addModifierControlFlowAtTransition (modifierName ++ show prefix) s functionCFG modifierCFG
 addModifierControlFlowAtTransitions modifierName prefix (s:placeholderStates) functionCFG modifierCFG =
                                                             let cfg = addModifierControlFlowAtTransition (modifierName ++ (show (prefix))) s functionCFG modifierCFG
@@ -600,14 +601,17 @@ cfgStepWithStatement (SimpleStatementVariableList identifierList Nothing) cfg st
                     let transition = Transition{src = state, dst = StatementState (nextLabel cfg) ((SimpleStatementVariableList identifierList Nothing)), condition = TT}
                         in ((addState (addTransition cfg transition) (dst transition)), dst transition)
 
-cfgStepWithStatement (SimpleStatementVariableDeclaration variableDeclaration Nothing) cfg state =
-                    let transition = Transition{src = state, dst = StatementState (nextLabel cfg) ((SimpleStatementVariableDeclaration variableDeclaration Nothing)), condition = TT}
-                        in ((addState (addTransition cfg transition) (dst transition)), dst transition)
+cfgStepWithStatement (SimpleStatementVariableDeclarationList [] []) cfg state = (cfg, state)
 
-cfgStepWithStatement (SimpleStatementVariableDeclaration variableDeclaration (Just expr)) cfg state =
-                     let (newCFG, newState) = cfgStepWithExpression expr cfg state
-                         transition = Transition{src = newState, dst = StatementState (nextLabel newCFG) ((SimpleStatementVariableDeclaration variableDeclaration (Just expr))), condition = TT}
-                        in ((addState (addTransition newCFG transition) (dst transition)), dst transition)
+cfgStepWithStatement (SimpleStatementVariableDeclarationList ((Just dec):decs) (exp:exps)) cfg state =
+                    let (intermedCFG, intermedState) = cfgStepWithExpression exp cfg state
+                        decTransition = Transition{src = intermedState, dst = StatementState (nextLabel intermedCFG) (SimpleStatementVariableDeclarationList [Just dec] [exp]), condition = TT}
+                        (newCFG, newState) = ((addState (addTransition intermedCFG decTransition) (dst decTransition)), dst decTransition)
+                      in cfgStepWithStatement (SimpleStatementVariableDeclarationList decs exps) newCFG newState
+
+cfgStepWithStatement (SimpleStatementVariableDeclarationList ((Nothing):decs) (exp:exps)) cfg state =
+                    let (newCFG, newState) = cfgStepWithExpression exp cfg state
+                      in cfgStepWithStatement (SimpleStatementVariableDeclarationList decs exps) newCFG newState
 
 cfgStepWithStatement (BlockStatement (Block [])) cfg state =  (cfg, state)
 cfgStepWithStatement (BlockStatement (Block (s : statements))) cfg state =  let (newCFG, newState) = cfgStepWithStatement s cfg state

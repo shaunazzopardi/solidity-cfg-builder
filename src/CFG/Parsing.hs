@@ -14,8 +14,6 @@ import Solidity.Parsing
 import CFG.CFG
 
 --Failure-safe choice
-(<||>) :: Parser a -> Parser a -> Parser a
-p <||> q =  try p <|> q
 
 
 instance Parseable State where

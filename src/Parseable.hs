@@ -12,7 +12,7 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
-module Parseable (Parseable (..), _display, lineDisplay) where
+module Parseable where
 
 import Data.Char
 import Text.Parsec
@@ -32,3 +32,8 @@ _display = (' ':) . display
 
 lineDisplay :: Parseable a => a -> String
 lineDisplay = filter (not . isSpace) . display
+
+
+
+(<||>) :: Parser a -> Parser a -> Parser a
+p <||> q =  try p <|> q
