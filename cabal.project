@@ -1,0 +1,6 @@
+source-repository-package
+  type: git
+  location: git://github.com/shaunazzopardi/contractlarva.git
+  subdir: ./
+
+packages: ./solidity-cfg-builder.cabal
