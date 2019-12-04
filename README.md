@@ -11,11 +11,9 @@ This tool given Solidity code generates a control-flow graph in DOT notation, wh
 
 ## Building the tool
 
-Requirements: [GHC](https://www.haskell.org/ghc/) (e.g. install the full [Haskell Platform](https://www.haskell.org/platform/))
+Requirements: [cabal v2.4.\*](https://www.haskell.org/cabal/) (e.g. install the full [Haskell Platform](https://www.haskell.org/platform/))
 
-Compilation: Run the following command in the src folder:
-
-> ghc -o solidity-cfg-builder Main.hs
+Compilation: Follow the instructions [here](https://cabal.readthedocs.io/en/latest/nix-local-build.html)
 
 ## Tool usage:
 
